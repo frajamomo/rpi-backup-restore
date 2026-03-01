@@ -1,0 +1,6 @@
+---
+- name: Restore Raspberry Pi from Synology NAS backup
+  hosts: raspberrypi
+  become: true
+  roles:
+    - restore

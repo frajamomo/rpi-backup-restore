@@ -1,0 +1,101 @@
+---
+- name: Record restore start time
+  ansible.builtin.set_fact:
+    restore_start: "{{ now(utc=false) }}"
+
+# Mount NAS share
+- name: Create mount point
+  ansible.builtin.file:
+    path: "{{ backup_mount_point }}"
+    state: directory
+    mode: "0755"
+
+- name: Mount NAS backup share
+  ansible.posix.mount:
+    src: "{{ backup_dest_share }}"
+    path: "{{ backup_mount_point }}"
+    fstype: cifs
+    opts: "{{ backup_mount_opts }}"
+    state: ephemeral
+
+- name: Run restore
+  block:
+    # Resolve snapshot path
+    - name: Read latest marker file
+      ansible.builtin.slurp:
+        src: "{{ backup_base_dir }}/latest"
+      register: latest_marker
+      when: restore_snapshot == "latest"
+
+    - name: Set snapshot name from marker
+      ansible.builtin.set_fact:
+        restore_snapshot_resolved: "{{ (latest_marker.content | b64decode | trim) if restore_snapshot == 'latest' else restore_snapshot }}"
+
+    - name: Verify snapshot directory exists
+      ansible.builtin.stat:
+        path: "{{ backup_base_dir }}/{{ restore_snapshot_resolved }}"
+      register: snapshot_stat
+
+    - name: Fail if snapshot does not exist
+      ansible.builtin.fail:
+        msg: "Snapshot '{{ restore_snapshot_resolved }}' not found at {{ backup_base_dir }}/{{ restore_snapshot_resolved }}"
+      when: not snapshot_stat.stat.exists
+
+    - name: Set resolved snapshot path
+      ansible.builtin.set_fact:
+        snapshot_path: "{{ backup_base_dir }}/{{ restore_snapshot_resolved }}"
+
+    - name: Display snapshot being restored
+      ansible.builtin.debug:
+        msg: "Restoring from snapshot: {{ snapshot_path }}"
+
+    # Dispatch to sub-tasks
+    - name: Install packages on fresh OS
+      ansible.builtin.include_tasks: packages.yml
+      tags: [packages]
+      when: restore_install_packages | bool
+
+    - name: Restore system configuration
+      ansible.builtin.include_tasks: system_config.yml
+      tags: [system_config]
+
+    - name: Restore Docker stacks
+      ansible.builtin.include_tasks: docker_stacks.yml
+      tags: [docker_stacks]
+
+    - name: Restore OpenVPN configuration
+      ansible.builtin.include_tasks: openvpn.yml
+      tags: [openvpn]
+
+    - name: Restart and enable services
+      ansible.builtin.include_tasks: services.yml
+      tags: [services]
+
+    - name: Verify restore
+      ansible.builtin.include_tasks: verify.yml
+      tags: [verify]
+
+  always:
+    # Unmount and report
+    - name: Unmount NAS backup share
+      ansible.posix.mount:
+        path: "{{ backup_mount_point }}"
+        state: unmounted
+
+    - name: Record restore end time
+      ansible.builtin.set_fact:
+        restore_end: "{{ now(utc=false) }}"
+
+    - name: Display restore report
+      ansible.builtin.debug:
+        msg: |
+          ========== RESTORE REPORT ==========
+          Snapshot:   {{ snapshot_path | default('unknown') }}
+          Started:    {{ restore_start }}
+          Finished:   {{ restore_end }}
+          --------- Next Steps ---------------
+          1. Run bastion-hardening playbook to re-apply security policies
+          2. Regenerate AIDE database: aide --init
+          3. Verify OpenVPN clients can connect
+          4. Verify all Docker containers are healthy
+          ======================================

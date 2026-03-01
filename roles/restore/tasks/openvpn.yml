@@ -1,0 +1,50 @@
+---
+- name: Restore OpenVPN configuration and PKI
+  ansible.builtin.command: >
+    rsync -a --chown=root:root
+    {{ snapshot_path }}/system/etc/openvpn/
+    /etc/openvpn/
+  changed_when: true
+
+- name: Set OpenVPN directory permissions to 0700
+  ansible.builtin.file:
+    path: /etc/openvpn
+    state: directory
+    mode: "0700"
+    owner: root
+    group: root
+
+- name: Find OpenVPN private key files
+  ansible.builtin.find:
+    paths: /etc/openvpn
+    patterns: "*.key"
+    recurse: true
+  register: openvpn_keys
+
+- name: Set private key permissions to 0600
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    mode: "0600"
+    owner: root
+    group: root
+  loop: "{{ openvpn_keys.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Find PKI directories
+  ansible.builtin.find:
+    paths: /etc/openvpn
+    file_type: directory
+    recurse: true
+  register: openvpn_dirs
+
+- name: Set PKI directory permissions to 0700
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    mode: "0700"
+    owner: root
+    group: root
+  loop: "{{ openvpn_dirs.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  notify: Restart openvpn

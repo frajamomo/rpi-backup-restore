@@ -1,0 +1,26 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [packages]
+
+- name: Install required packages
+  ansible.builtin.apt:
+    name: "{{ restore_packages }}"
+    state: present
+  tags: [packages]
+
+- name: Ensure Docker service is enabled and started
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+  tags: [packages]
+
+- name: Add user {{ vault_user }} to docker group
+  ansible.builtin.user:
+    name: "{{ vault_user }}"
+    groups: docker
+    append: true
+  tags: [packages]

@@ -1,0 +1,15 @@
+---
+- name: Create stacks directory
+  ansible.builtin.file:
+    path: "{{ backup_stacks_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Restore Docker stacks from backup
+  ansible.builtin.command: >
+    rsync -a
+    {{ snapshot_path }}/stacks/
+    {{ backup_stacks_dir }}/
+  changed_when: true

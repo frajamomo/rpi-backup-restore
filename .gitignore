@@ -1,0 +1,5 @@
+# Ansible vault (encrypted secrets)
+inventory/group_vars/all/vault.yml
+
+# Ansible retry files
+*.retry

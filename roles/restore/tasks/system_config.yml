@@ -1,0 +1,166 @@
+---
+# SSH configuration and host keys
+- name: Restore SSH config and host keys
+  ansible.builtin.command: >
+    rsync -a --chown=root:root
+    {{ snapshot_path }}/system/etc/ssh/
+    /etc/ssh/
+  changed_when: true
+  notify: Restart sshd
+
+- name: Set SSH host key permissions
+  ansible.builtin.shell: |
+    chmod 0600 /etc/ssh/ssh_host_*_key
+    chmod 0644 /etc/ssh/ssh_host_*_key.pub
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+# fstab and boot config
+- name: Restore fstab
+  ansible.builtin.copy:
+    src: "{{ snapshot_path }}/system/etc/fstab"
+    dest: /etc/fstab
+    owner: root
+    group: root
+    mode: "0644"
+    remote_src: true
+
+- name: Restore cmdline.txt
+  ansible.builtin.copy:
+    src: "{{ snapshot_path }}/system/boot/firmware/cmdline.txt"
+    dest: /boot/firmware/cmdline.txt
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+
+# Firewall rules
+- name: Restore iptables rules
+  ansible.builtin.command: >
+    rsync -a --chown=root:root
+    {{ snapshot_path }}/system/etc/iptables/
+    /etc/iptables/
+  changed_when: true
+  notify: Restart netfilter-persistent
+
+# Sysctl
+- name: Restore sysctl configuration
+  ansible.builtin.command: >
+    rsync -a --chown=root:root
+    {{ snapshot_path }}/system/etc/sysctl.d/
+    /etc/sysctl.d/
+  changed_when: true
+  notify: Apply sysctl
+
+- name: Restore sysctl.conf
+  ansible.builtin.copy:
+    src: "{{ snapshot_path }}/system/etc/sysctl.conf"
+    dest: /etc/sysctl.conf
+    owner: root
+    group: root
+    mode: "0644"
+    remote_src: true
+  notify: Apply sysctl
+
+# Fail2ban
+- name: Restore fail2ban configuration
+  ansible.builtin.command: >
+    rsync -a --chown=root:root
+    {{ snapshot_path }}/system/etc/fail2ban/
+    /etc/fail2ban/
+  changed_when: true
+  notify: Restart fail2ban
+
+# Auditd
+- name: Restore auditd configuration
+  ansible.builtin.command: >
+    rsync -a --chown=root:root
+    {{ snapshot_path }}/system/etc/audit/
+    /etc/audit/
+  changed_when: true
+  notify: Restart auditd
+
+# AIDE configuration (not the database)
+- name: Restore AIDE configuration
+  ansible.builtin.command: >
+    rsync -a --chown=root:root
+    {{ snapshot_path }}/system/etc/aide/
+    /etc/aide/
+  changed_when: true
+
+# Systemd units (docker-compose services, AIDE timer)
+- name: Restore systemd units
+  ansible.builtin.shell: |
+    rsync -a --chown=root:root {{ snapshot_path }}/system/etc/systemd/system/docker-compose-*.service /etc/systemd/system/ 2>/dev/null || true
+    rsync -a --chown=root:root {{ snapshot_path }}/system/etc/systemd/system/aide-check.* /etc/systemd/system/ 2>/dev/null || true
+  args:
+    executable: /bin/bash
+  changed_when: true
+  notify: Reload systemd
+
+# Shell hardening (may not exist if bastion-hardening has not been run)
+- name: Check if hardening profile exists in backup
+  ansible.builtin.stat:
+    path: "{{ snapshot_path }}/system/etc/profile.d/hardening.sh"
+  register: hardening_profile
+
+- name: Restore shell hardening profile
+  ansible.builtin.copy:
+    src: "{{ snapshot_path }}/system/etc/profile.d/hardening.sh"
+    dest: /etc/profile.d/hardening.sh
+    owner: root
+    group: root
+    mode: "0644"
+    remote_src: true
+  when: hardening_profile.stat.exists
+
+# Security limits and modprobe
+- name: Restore security limits
+  ansible.builtin.command: >
+    rsync -a --chown=root:root
+    {{ snapshot_path }}/system/etc/security/limits.d/
+    /etc/security/limits.d/
+  changed_when: true
+
+- name: Restore modprobe configuration
+  ansible.builtin.command: >
+    rsync -a --chown=root:root
+    {{ snapshot_path }}/system/etc/modprobe.d/
+    /etc/modprobe.d/
+  changed_when: true
+
+# Cron jobs
+- name: Restore cron.d
+  ansible.builtin.command: >
+    rsync -a --chown=root:root
+    {{ snapshot_path }}/system/etc/cron.d/
+    /etc/cron.d/
+  changed_when: true
+
+# User home files
+- name: Restore user SMB credentials
+  ansible.builtin.copy:
+    src: "{{ snapshot_path }}/user/.smbcredentials"
+    dest: "{{ backup_user_home }}/.smbcredentials"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0600"
+    remote_src: true
+
+- name: Ensure user .ssh directory exists
+  ansible.builtin.file:
+    path: "{{ backup_user_home }}/.ssh"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0700"
+
+- name: Restore user authorized_keys
+  ansible.builtin.copy:
+    src: "{{ snapshot_path }}/user/.ssh/authorized_keys"
+    dest: "{{ backup_user_home }}/.ssh/authorized_keys"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0600"
+    remote_src: true

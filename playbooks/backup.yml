@@ -1,0 +1,6 @@
+---
+- name: Backup Raspberry Pi to Synology NAS
+  hosts: raspberrypi
+  become: true
+  roles:
+    - backup

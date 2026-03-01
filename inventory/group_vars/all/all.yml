@@ -1,0 +1,67 @@
+---
+# NAS / CIFS mount
+backup_dest_share: "{{ vault_backup_dest_share }}"
+backup_credentials: "/home/{{ vault_user }}/.smbcredentials"
+backup_mount_point: "/mnt/backup"
+backup_mount_opts: "{{ vault_backup_mount_opts }},credentials={{ backup_credentials }}"
+backup_base_dir: "{{ backup_mount_point }}/raspberrypi"
+
+# Backup settings
+backup_retention: 5
+backup_stop_docker: true
+
+# Source directories
+backup_stacks_dir: "/opt/stacks"
+# System config files/dirs to back up (rsync --relative preserves paths)
+backup_system_paths:
+  - /etc/openvpn
+  - /etc/ssh/sshd_config
+  - /etc/ssh/ssh_host_*_key
+  - /etc/ssh/ssh_host_*_key.pub
+  - /etc/sysctl.d
+  - /etc/sysctl.conf
+  - /etc/iptables
+  - /etc/fail2ban
+  - /etc/audit
+  - /etc/aide
+  - /etc/fstab
+  - /boot/firmware/cmdline.txt
+  - /etc/systemd/system/docker-compose-*.service
+  - /etc/systemd/system/aide-check.*
+  - /etc/profile.d/hardening.sh
+  - /etc/security/limits.d
+  - /etc/modprobe.d
+  - /etc/default/grub
+  - /etc/cron.d
+
+# User home files to back up
+backup_user_home: "/home/{{ vault_user }}"
+backup_user_files:
+  - .smbcredentials
+  - .ssh/authorized_keys
+
+# Restore settings
+restore_snapshot: "latest"
+restore_install_packages: true
+
+# Packages to install on a fresh OS during restore
+restore_packages:
+  - docker.io
+  - docker-compose
+  - openvpn
+  - fail2ban
+  - auditd
+  - audispd-plugins
+  - aide
+  - iptables-persistent
+  - netfilter-persistent
+  - cifs-utils
+  - rsync
+  - curl
+  - jq
+
+# Docker compose systemd units (managed by systemd — docker-compose down removes containers)
+docker_compose_units: "{{ vault_docker_compose_units }}"
+
+# Standalone Docker containers (managed by Docker restart policy, no systemd unit)
+docker_standalone_containers: "{{ vault_docker_standalone_containers }}"

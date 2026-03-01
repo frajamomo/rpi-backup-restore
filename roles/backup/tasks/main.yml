@@ -1,0 +1,215 @@
+---
+# Step 1: Record start time and generate timestamp
+- name: Record backup start time
+  ansible.builtin.set_fact:
+    backup_start: "{{ now(utc=false) }}"
+    backup_timestamp: "{{ now(utc=false, fmt='%Y%m%d_%H%M%S') }}"
+
+- name: Set backup destination path
+  ansible.builtin.set_fact:
+    backup_dest: "{{ backup_base_dir }}/{{ backup_timestamp }}"
+
+# Step 2: Mount NAS share
+- name: Create mount point
+  ansible.builtin.file:
+    path: "{{ backup_mount_point }}"
+    state: directory
+    mode: "0755"
+
+- name: Mount NAS backup share
+  ansible.posix.mount:
+    src: "{{ backup_dest_share }}"
+    path: "{{ backup_mount_point }}"
+    fstype: cifs
+    opts: "{{ backup_mount_opts }}"
+    state: ephemeral
+
+- name: Run backup
+  block:
+    # Step 3: Create backup directory structure
+    - name: Create backup subdirectories
+      ansible.builtin.file:
+        path: "{{ backup_dest }}/{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - system
+        - stacks
+        - user
+
+    # Step 4: Stop Docker containers for data consistency
+    - name: Stop compose systemd units
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ docker_compose_units }}"
+      when: backup_stop_docker | bool
+      ignore_errors: true
+
+    - name: Stop standalone containers
+      ansible.builtin.command: docker stop {{ docker_standalone_containers | join(' ') }}
+      when: backup_stop_docker | bool
+      changed_when: true
+
+    # Step 5: Rsync system config to backup
+    - name: Rsync system config files (--relative)
+      ansible.builtin.shell: |
+        rsync -a --relative --copy-links --ignore-missing-args \
+          {{ backup_system_paths | join(' ') }} \
+          "{{ backup_dest }}/system/"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    # Step 6: Rsync user home files
+    - name: Rsync user home files (--relative)
+      ansible.builtin.shell: |
+        cd "{{ backup_user_home }}" && \
+        rsync -a --relative \
+          {{ backup_user_files | join(' ') }} \
+          "{{ backup_dest }}/user/"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    # Step 7: Rsync Docker stacks (exclude large downloads and sockets)
+    - name: Rsync Docker stacks
+      ansible.builtin.command: >
+        rsync -a --copy-links --no-specials
+        --exclude='qbittorrent/downloads'
+        --exclude='*.log'
+        --exclude='*.tmp'
+        {{ backup_stacks_dir }}/
+        {{ backup_dest }}/stacks/
+      changed_when: true
+
+    # Step 8: Restart Docker containers
+    - name: Restart Docker service to rebuild NAT chains
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+      when: backup_stop_docker | bool
+
+    - name: Start standalone containers
+      ansible.builtin.command: docker start {{ docker_standalone_containers | join(' ') }}
+      when: backup_stop_docker | bool
+      changed_when: true
+
+    - name: Start compose systemd units
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+      loop: "{{ docker_compose_units }}"
+      when: backup_stop_docker | bool
+      ignore_errors: true
+
+    # Step 10: Set restrictive permissions on backup
+    # NOTE: CIFS mount permissions are controlled by mount options (uid/gid/file_mode/dir_mode),
+    # not by chmod. These steps are skipped on CIFS but kept for non-CIFS backup targets.
+    - name: Check if backup is on a CIFS mount
+      ansible.builtin.command: stat -f -c %T "{{ backup_dest }}"
+      register: backup_fstype
+      changed_when: false
+
+    - name: Set backup directory permissions to 0700
+      ansible.builtin.command: find "{{ backup_dest }}" -type d -exec chmod 0700 {} +
+      changed_when: true
+      when: backup_fstype.stdout != "smb2"
+
+    - name: Set backup file permissions to 0600
+      ansible.builtin.command: find "{{ backup_dest }}" -type f -exec chmod 0600 {} +
+      changed_when: true
+      when: backup_fstype.stdout != "smb2"
+
+    # Step 11: Update latest marker (plain file — CIFS does not support symlinks)
+    - name: Write latest marker file
+      ansible.builtin.copy:
+        content: "{{ backup_timestamp }}"
+        dest: "{{ backup_base_dir }}/latest"
+        mode: "0644"
+
+    # Step 12: Prune old backups beyond retention limit
+    - name: List existing backups sorted by name
+      ansible.builtin.find:
+        paths: "{{ backup_base_dir }}"
+        file_type: directory
+        patterns: "[0-9]*_[0-9]*"
+      register: existing_backups
+
+    - name: Identify backups to prune
+      ansible.builtin.set_fact:
+        backups_to_prune: >-
+          {{ (existing_backups.files
+             | sort(attribute='path', reverse=true)
+             | map(attribute='path')
+             | list)[backup_retention | int:] }}
+
+    - name: Prune old backups
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ backups_to_prune | default([]) }}"
+
+    # Step 13: Generate report
+    - name: Get backup size
+      ansible.builtin.command: du -sh "{{ backup_dest }}"
+      register: backup_size
+      changed_when: false
+
+    - name: Record backup end time
+      ansible.builtin.set_fact:
+        backup_end: "{{ now(utc=false) }}"
+
+    - name: Get container status after backup
+      ansible.builtin.command: docker ps --format '{{ '{{' }}.Names{{ '}}' }} {{ '{{' }}.Status{{ '}}' }}'
+      register: container_status
+      changed_when: false
+
+    - name: Display backup report
+      ansible.builtin.debug:
+        msg: |
+          ========== BACKUP REPORT ==========
+          Timestamp:  {{ backup_timestamp }}
+          Location:   {{ backup_dest }}
+          Size:       {{ backup_size.stdout.split('\t')[0] }}
+          Started:    {{ backup_start }}
+          Finished:   {{ backup_end }}
+          Retained:   {{ [existing_backups.files | length, backup_retention | int] | min }} backups
+          Pruned:     {{ backups_to_prune | default([]) | length }} old backup(s)
+          -------- Container Status ---------
+          {{ container_status.stdout }}
+          ====================================
+
+  rescue:
+    # Ensure containers are restarted even on failure
+    - name: Restart Docker service after failure
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+      when: backup_stop_docker | bool
+      ignore_errors: true
+
+    - name: Start standalone containers after failure
+      ansible.builtin.command: docker start {{ docker_standalone_containers | join(' ') }}
+      when: backup_stop_docker | bool
+      changed_when: true
+      ignore_errors: true
+
+    - name: Start compose systemd units after failure
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+      loop: "{{ docker_compose_units }}"
+      when: backup_stop_docker | bool
+      ignore_errors: true
+
+    - name: Report backup failure
+      ansible.builtin.fail:
+        msg: "Backup failed. Containers have been restarted. Check errors above."
+
+  always:
+    # Step 14: Unmount NAS share
+    - name: Unmount NAS backup share
+      ansible.posix.mount:
+        path: "{{ backup_mount_point }}"
+        state: unmounted

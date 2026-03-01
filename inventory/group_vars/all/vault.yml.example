@@ -1,0 +1,24 @@
+---
+# Copy this file to vault.yml and fill in your values, then encrypt:
+#   cp vault.yml.example vault.yml
+#   vi vault.yml
+#   ansible-vault encrypt vault.yml
+
+# Target host connection (Ansible magic variables)
+ansible_host: "192.168.x.x"
+ansible_user: "your_username"
+
+# User (referenced by tasks and paths)
+vault_user: "your_username"
+
+# NAS / CIFS
+vault_backup_dest_share: "//nas-hostname/share/backups"
+vault_backup_mount_opts: "vers=3.0,uid=1000,gid=1000"
+
+# Docker compose systemd units
+vault_docker_compose_units:
+  - docker-compose-myapp.service
+
+# Standalone Docker containers
+vault_docker_standalone_containers:
+  - mycontainer

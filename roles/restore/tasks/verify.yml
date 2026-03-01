@@ -1,0 +1,45 @@
+---
+- name: Wait for containers to start
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: Check running Docker containers
+  ansible.builtin.command: docker ps --format '{{ '{{' }}.Names{{ '}}' }} {{ '{{' }}.Status{{ '}}' }}'
+  register: verify_containers
+  changed_when: false
+
+- name: Display container status
+  ansible.builtin.debug:
+    msg: |
+      -------- Container Status ---------
+      {{ verify_containers.stdout }}
+      ------------------------------------
+
+- name: Count running containers
+  ansible.builtin.set_fact:
+    running_count: "{{ verify_containers.stdout_lines | length }}"
+
+- name: Warn if not all containers are running
+  ansible.builtin.debug:
+    msg: "WARNING: Only {{ running_count }} containers running. Expected 6."
+  when: running_count | int < 6
+
+- name: Check core service statuses
+  ansible.builtin.command: systemctl is-active {{ item }}
+  register: service_checks
+  changed_when: false
+  failed_when: false
+  loop:
+    - sshd
+    - openvpn
+    - fail2ban
+    - auditd
+    - docker
+
+- name: Display service statuses
+  ansible.builtin.debug:
+    msg: "{{ item.item }}: {{ item.stdout }}"
+  loop: "{{ service_checks.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
