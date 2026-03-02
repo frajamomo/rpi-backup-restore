@@ -1,4 +1,16 @@
 ---
+- name: Stop compose systemd units before restore
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop: "{{ docker_compose_units }}"
+  ignore_errors: true
+
+- name: Stop standalone containers before restore
+  ansible.builtin.command: docker stop {{ docker_standalone_containers | join(' ') }}
+  changed_when: true
+  ignore_errors: true
+
 - name: Create stacks directory
   ansible.builtin.file:
     path: "{{ backup_stacks_dir }}"
@@ -13,3 +25,15 @@
     {{ snapshot_path }}/stacks/
     {{ backup_stacks_dir }}/
   changed_when: true
+
+- name: Start standalone containers after restore
+  ansible.builtin.command: docker start {{ docker_standalone_containers | join(' ') }}
+  changed_when: true
+  ignore_errors: true
+
+- name: Start compose systemd units after restore
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+  loop: "{{ docker_compose_units }}"
+  ignore_errors: true
