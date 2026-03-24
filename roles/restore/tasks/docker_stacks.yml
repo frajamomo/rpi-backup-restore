@@ -10,6 +10,7 @@
   ansible.builtin.command: docker stop {{ docker_standalone_containers | join(' ') }}
   changed_when: true
   ignore_errors: true
+  when: docker_standalone_containers | length > 0
 
 - name: Create stacks directory
   ansible.builtin.file:
@@ -30,6 +31,7 @@
   ansible.builtin.command: docker start {{ docker_standalone_containers | join(' ') }}
   changed_when: true
   ignore_errors: true
+  when: docker_standalone_containers | length > 0
 
 - name: Start compose systemd units after restore
   ansible.builtin.systemd:
