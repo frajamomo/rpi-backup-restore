@@ -148,10 +148,9 @@
              | list)[backup_retention | int:] }}
 
     - name: Prune old backups
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
+      ansible.builtin.command: rm -rf "{{ item }}"
       loop: "{{ backups_to_prune | default([]) }}"
+      changed_when: true
 
     # Step 13: Generate report
     - name: Get backup size
