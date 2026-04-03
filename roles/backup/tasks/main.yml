@@ -78,6 +78,8 @@
         rsync -a --copy-links --no-specials
         --exclude='qbittorrent/downloads'
         --exclude='jellyfin/cache'
+        --exclude='jellyfin/config/metadata'
+        --exclude='speedtest/config/database.sqlite'
         --exclude='*.log'
         --exclude='*.tmp'
         {{ backup_stacks_dir }}/
