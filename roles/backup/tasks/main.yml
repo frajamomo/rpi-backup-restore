@@ -48,7 +48,7 @@
 
     - name: Stop standalone containers
       ansible.builtin.command: docker stop {{ docker_standalone_containers | join(' ') }}
-      when: backup_stop_docker | bool and docker_standalone_containers | length > 0
+      when: backup_stop_docker | bool
       changed_when: true
 
     # Step 5: Rsync system config to backup
@@ -77,11 +77,9 @@
       ansible.builtin.command: >
         rsync -a --copy-links --no-specials
         --exclude='qbittorrent/downloads'
-        --exclude='jellyfin/cache'
-        --exclude='jellyfin/config/metadata'
-        --exclude='speedtest/config/database.sqlite'
         --exclude='*.log'
         --exclude='*.tmp'
+        --exclude='netdata/config/orig'
         {{ backup_stacks_dir }}/
         {{ backup_dest }}/stacks/
       changed_when: true
@@ -95,7 +93,7 @@
 
     - name: Start standalone containers
       ansible.builtin.command: docker start {{ docker_standalone_containers | join(' ') }}
-      when: backup_stop_docker | bool and docker_standalone_containers | length > 0
+      when: backup_stop_docker | bool
       changed_when: true
 
     - name: Start compose systemd units
@@ -148,9 +146,10 @@
              | list)[backup_retention | int:] }}
 
     - name: Prune old backups
-      ansible.builtin.command: rm -rf "{{ item }}"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
       loop: "{{ backups_to_prune | default([]) }}"
-      changed_when: true
 
     # Step 13: Generate report
     - name: Get backup size
@@ -193,7 +192,7 @@
 
     - name: Start standalone containers after failure
       ansible.builtin.command: docker start {{ docker_standalone_containers | join(' ') }}
-      when: backup_stop_docker | bool and docker_standalone_containers | length > 0
+      when: backup_stop_docker | bool
       changed_when: true
       ignore_errors: true
 
