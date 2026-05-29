@@ -77,9 +77,12 @@
       ansible.builtin.command: >
         rsync -a --copy-links --no-specials
         --exclude='qbittorrent/downloads'
+        --exclude='jellyfin/cache'
+        --exclude='jellyfin/config/metadata'
+        --exclude='speedtest/config/database.sqlite'
+        --exclude='netdata/config/orig'
         --exclude='*.log'
         --exclude='*.tmp'
-        --exclude='netdata/config/orig'
         {{ backup_stacks_dir }}/
         {{ backup_dest }}/stacks/
       changed_when: true
