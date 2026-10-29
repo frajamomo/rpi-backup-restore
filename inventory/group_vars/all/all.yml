@@ -28,6 +28,9 @@ backup_system_paths:
   - /boot/firmware/cmdline.txt
   - /etc/systemd/system/docker-compose-*.service
   - /etc/systemd/system/aide-check.*
+  - /etc/systemd/system/synology-mount.service
+  - /etc/systemd/system/synology-mount.timer
+  - /usr/local/bin/synology-mount-monitor.sh
   - /etc/profile.d/hardening.sh
   - /etc/security/limits.d
   - /etc/modprobe.d

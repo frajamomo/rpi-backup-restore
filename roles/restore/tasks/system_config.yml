@@ -89,15 +89,39 @@
     /etc/aide/
   changed_when: true
 
-# Systemd units (docker-compose services, AIDE timer)
+# Systemd units (docker-compose services, AIDE timer, Synology mount monitor)
 - name: Restore systemd units
   ansible.builtin.shell: |
     rsync -a --chown=root:root {{ snapshot_path }}/system/etc/systemd/system/docker-compose-*.service /etc/systemd/system/ 2>/dev/null || true
     rsync -a --chown=root:root {{ snapshot_path }}/system/etc/systemd/system/aide-check.* /etc/systemd/system/ 2>/dev/null || true
+    rsync -a --chown=root:root {{ snapshot_path }}/system/etc/systemd/system/synology-mount.* /etc/systemd/system/ 2>/dev/null || true
   args:
     executable: /bin/bash
   changed_when: true
   notify: Reload systemd
+
+# Synology mount monitor script (remounts the CIFS shares after a NAS outage)
+- name: Check if Synology mount monitor exists in backup
+  ansible.builtin.stat:
+    path: "{{ snapshot_path }}/system/usr/local/bin/synology-mount-monitor.sh"
+  register: synology_monitor_backup
+
+- name: Restore Synology mount monitor script
+  ansible.builtin.copy:
+    src: "{{ snapshot_path }}/system/usr/local/bin/synology-mount-monitor.sh"
+    dest: /usr/local/bin/synology-mount-monitor.sh
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+  when: synology_monitor_backup.stat.exists
+
+- name: Enable Synology mount monitor timer
+  ansible.builtin.systemd:
+    name: synology-mount.timer
+    enabled: true
+    daemon_reload: true
+  when: synology_monitor_backup.stat.exists
 
 # Shell hardening (may not exist if bastion-hardening has not been run)
 - name: Check if hardening profile exists in backup

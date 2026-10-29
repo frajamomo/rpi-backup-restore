@@ -6,7 +6,7 @@ Ansible playbooks to back up and restore a Raspberry Pi 5 running Docker contain
 
 | Directory | Contents | Size |
 |-----------|----------|------|
-| `system/` | SSH keys/config, iptables, sysctl, fail2ban, auditd, AIDE config, OpenVPN + PKI, fstab, cmdline.txt, systemd units, cron jobs | ~2 MB |
+| `system/` | SSH keys/config, iptables, sysctl, fail2ban, auditd, AIDE config, OpenVPN + PKI, fstab, cmdline.txt, systemd units, cron jobs, Synology mount monitor | ~2 MB |
 | `stacks/` | `/opt/stacks/` — Docker Compose files and container config/data (excludes qBittorrent downloads) | ~2.8 GB |
 | `user/`   | `.smbcredentials`, `.ssh/authorized_keys` | ~8 KB |
 
