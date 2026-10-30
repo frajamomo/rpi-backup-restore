@@ -47,6 +47,21 @@ Total: ~2.8 GB per backup.
    ansible-vault edit inventory/group_vars/all/vault.yml
    ```
 
+## Encryption
+
+Snapshots are stored as a single AES-256 archive, `<timestamp>.tar.gz.gpg`.
+The tree contains the OpenVPN CA and client keys, the SSH host keys,
+`.smbcredentials` and application tokens, and CIFS derives file modes from the
+mount options, so permissions alone cannot protect it on the NAS.
+
+Both playbooks **prompt for the passphrase**; it is never stored in the repo
+or the vault. Backup asks twice, because a typo would produce an archive
+nobody can open. Keep the passphrase somewhere other than the Pi — without it
+the backups are unreadable.
+
+Snapshots taken before encryption was introduced are plain directories;
+restore still reads those if no archive of that name exists.
+
 ## Usage
 
 ### Backup
@@ -98,15 +113,27 @@ Available tags: `packages`, `system_config`, `docker_stacks`, `openvpn`, `servic
 
 ## Backup workflow
 
-1. Mount NAS share via CIFS
-2. Create timestamped directory (`YYYYMMDD_HHMMSS`)
-3. Stop Docker containers for data consistency
-4. Rsync system config, user files, and Docker stacks
-5. Restart Docker containers
-6. Update `latest` marker file
-7. Prune backups beyond retention limit (default: 5)
-8. Print report with size, duration, and container status
-9. Unmount NAS share
+1. Prompt for the encryption passphrase
+2. Mount NAS share via CIFS
+3. Create timestamped directory (`YYYYMMDD_HHMMSS`)
+4. Stop Docker containers for data consistency
+5. Rsync system config, user files, and Docker stacks
+6. Restart Docker containers
+7. Pack and encrypt the tree into `<timestamp>.tar.gz.gpg`
+8. Test-decrypt the archive, then delete the plaintext tree
+9. Update `latest` marker file
+10. Prune backups beyond retention limit (default: 5)
+11. Print report with size, duration, and container status
+12. Unmount NAS share
+
+## Restore workflow
+
+1. Prompt for the passphrase
+2. Mount the NAS share, resolve the snapshot (`latest` by default)
+3. Decrypt and unpack into a local staging directory — a wrong passphrase
+   fails here, before anything on the host is modified
+4. Restore packages, system config, Docker stacks, OpenVPN, services
+5. Remove the staging directory and the temporary passphrase file, always
 
 ## Key variables
 
