@@ -1,6 +1,25 @@
 ---
-- name: Backup Raspberry Pi to Synology NAS
+- name: Back up Raspberry Pi to Synology NAS
   hosts: raspberrypi
   become: true
+
+  vars_prompt:
+    # Asked here rather than read from a vault: the passphrase is the only
+    # thing protecting the VPN CA key, the SSH host keys and .smbcredentials
+    # once the archive is on the NAS. confirm catches a typo, which would
+    # otherwise produce a backup nobody can open.
+    - name: backup_passphrase
+      prompt: "Passphrase to encrypt this backup"
+      private: true
+      confirm: true
+
+  pre_tasks:
+    - name: Require a passphrase
+      ansible.builtin.fail:
+        msg: >-
+          A passphrase is required. Backups are encrypted and cannot be
+          written without one.
+      when: backup_passphrase | default('') | length == 0
+
   roles:
     - backup

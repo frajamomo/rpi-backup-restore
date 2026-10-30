@@ -10,6 +10,15 @@ backup_base_dir: "{{ backup_mount_point }}/raspberrypi"
 backup_retention: 5
 backup_stop_docker: true
 
+# Encryption. Snapshots are stored as a single AES-256 archive: the tree
+# contains the OpenVPN CA and client keys, SSH host keys, .smbcredentials and
+# application tokens, and CIFS ignores chmod, so file modes cannot protect it.
+# The passphrase is never stored -- both playbooks prompt for it.
+backup_archive_suffix: ".tar.gz.gpg"
+backup_archive: "{{ backup_base_dir }}/{{ backup_timestamp }}{{ backup_archive_suffix }}"
+backup_passphrase_file: "/root/.backup-passphrase.tmp"
+backup_compress_threads: 4
+
 # Source directories
 backup_stacks_dir: "/opt/stacks"
 # System config files/dirs to back up (rsync --relative preserves paths)
@@ -68,3 +77,8 @@ docker_compose_units: "{{ vault_docker_compose_units }}"
 
 # Standalone Docker containers (managed by Docker restart policy, no systemd unit)
 docker_standalone_containers: "{{ vault_docker_standalone_containers }}"
+
+# Where the archive is decrypted during a restore. Local disk, not the NAS:
+# the decrypted tree contains every secret on the host and is removed when
+# the play finishes.
+restore_staging_dir: "/var/tmp/rpi-restore-staging"

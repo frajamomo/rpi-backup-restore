@@ -106,23 +106,46 @@
       when: backup_stop_docker | bool
       ignore_errors: true
 
-    # Step 10: Set restrictive permissions on backup
-    # NOTE: CIFS mount permissions are controlled by mount options (uid/gid/file_mode/dir_mode),
-    # not by chmod. These steps are skipped on CIFS but kept for non-CIFS backup targets.
-    - name: Check if backup is on a CIFS mount
-      ansible.builtin.command: stat -f -c %T "{{ backup_dest }}"
-      register: backup_fstype
+    # Step 10: Encrypt the snapshot
+    #
+    # The snapshot holds the OpenVPN CA and client keys, the SSH host keys,
+    # .smbcredentials and assorted application tokens. CIFS forces file modes
+    # from the mount options, so chmod cannot protect any of it: anyone able
+    # to mount the share could read the lot. Everything is therefore rolled
+    # into one AES-256 archive and the plaintext tree is removed.
+    - name: Write the passphrase to a temporary file
+      ansible.builtin.copy:
+        content: "{{ backup_passphrase }}"
+        dest: "{{ backup_passphrase_file }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Create the encrypted archive
+      ansible.builtin.shell: |
+        set -o pipefail
+        tar -C "{{ backup_dest }}" -cf - . \
+          | pigz -p {{ backup_compress_threads }} \
+          | gpg --batch --yes --symmetric --cipher-algo AES256 \
+                --passphrase-file "{{ backup_passphrase_file }}" \
+                -o "{{ backup_archive }}"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Confirm the archive decrypts before the plaintext is removed
+      ansible.builtin.shell: |
+        set -o pipefail
+        gpg --batch --quiet --decrypt \
+            --passphrase-file "{{ backup_passphrase_file }}" \
+            "{{ backup_archive }}" | tar -tzf - >/dev/null
+      args:
+        executable: /bin/bash
       changed_when: false
 
-    - name: Set backup directory permissions to 0700
-      ansible.builtin.command: find "{{ backup_dest }}" -type d -exec chmod 0700 {} +
-      changed_when: true
-      when: backup_fstype.stdout != "smb2"
-
-    - name: Set backup file permissions to 0600
-      ansible.builtin.command: find "{{ backup_dest }}" -type f -exec chmod 0600 {} +
-      changed_when: true
-      when: backup_fstype.stdout != "smb2"
+    - name: Remove the plaintext snapshot tree
+      ansible.builtin.file:
+        path: "{{ backup_dest }}"
+        state: absent
 
     # Step 11: Update latest marker (plain file — CIFS does not support symlinks)
     - name: Write latest marker file
@@ -135,8 +158,8 @@
     - name: List existing backups sorted by name
       ansible.builtin.find:
         paths: "{{ backup_base_dir }}"
-        file_type: directory
-        patterns: "[0-9]*_[0-9]*"
+        file_type: file
+        patterns: "[0-9]*_[0-9]*{{ backup_archive_suffix }}"
       register: existing_backups
 
     - name: Identify backups to prune
@@ -155,7 +178,7 @@
 
     # Step 13: Generate report
     - name: Get backup size
-      ansible.builtin.command: du -sh "{{ backup_dest }}"
+      ansible.builtin.command: du -sh "{{ backup_archive }}"
       register: backup_size
       changed_when: false
 
@@ -173,7 +196,7 @@
         msg: |
           ========== BACKUP REPORT ==========
           Timestamp:  {{ backup_timestamp }}
-          Location:   {{ backup_dest }}
+          Location:   {{ backup_archive }}
           Size:       {{ backup_size.stdout.split('\t')[0] }}
           Started:    {{ backup_start }}
           Finished:   {{ backup_end }}
@@ -211,6 +234,12 @@
         msg: "Backup failed. Containers have been restarted. Check errors above."
 
   always:
+    # Remove the passphrase file whatever happened above
+    - name: Remove the temporary passphrase file
+      ansible.builtin.file:
+        path: "{{ backup_passphrase_file }}"
+        state: absent
+
     # Step 14: Unmount NAS share
     - name: Unmount NAS backup share
       ansible.posix.mount:

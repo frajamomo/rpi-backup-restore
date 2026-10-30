@@ -31,19 +31,63 @@
       ansible.builtin.set_fact:
         restore_snapshot_resolved: "{{ (latest_marker.content | b64decode | trim) if restore_snapshot == 'latest' else restore_snapshot }}"
 
-    - name: Verify snapshot directory exists
+    - name: Look for an encrypted archive
+      ansible.builtin.stat:
+        path: "{{ backup_base_dir }}/{{ restore_snapshot_resolved }}{{ backup_archive_suffix }}"
+      register: archive_stat
+
+    # Snapshots written before encryption was introduced are plain
+    # directories; still restorable, just unprotected on the NAS.
+    - name: Look for a legacy unencrypted snapshot directory
       ansible.builtin.stat:
         path: "{{ backup_base_dir }}/{{ restore_snapshot_resolved }}"
       register: snapshot_stat
 
-    - name: Fail if snapshot does not exist
+    - name: Fail if the snapshot does not exist in either form
       ansible.builtin.fail:
-        msg: "Snapshot '{{ restore_snapshot_resolved }}' not found at {{ backup_base_dir }}/{{ restore_snapshot_resolved }}"
-      when: not snapshot_stat.stat.exists
+        msg: >-
+          Snapshot '{{ restore_snapshot_resolved }}' not found under
+          {{ backup_base_dir }} as either
+          {{ restore_snapshot_resolved }}{{ backup_archive_suffix }} or a
+          directory.
+      when: not archive_stat.stat.exists and not snapshot_stat.stat.exists
+
+    - name: Decrypt and extract the archive
+      when: archive_stat.stat.exists
+      block:
+        - name: Create a staging directory for the decrypted snapshot
+          ansible.builtin.file:
+            path: "{{ restore_staging_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Write the passphrase to a temporary file
+          ansible.builtin.copy:
+            content: "{{ backup_passphrase }}"
+            dest: "{{ backup_passphrase_file }}"
+            mode: "0600"
+          no_log: true
+
+        # Fails cleanly on a wrong passphrase, before anything on the host
+        # has been modified.
+        - name: Decrypt and unpack
+          ansible.builtin.shell: |
+            set -o pipefail
+            gpg --batch --quiet --decrypt \
+                --passphrase-file "{{ backup_passphrase_file }}" \
+                "{{ backup_base_dir }}/{{ restore_snapshot_resolved }}{{ backup_archive_suffix }}" \
+              | tar -C "{{ restore_staging_dir }}" -xzf -
+          args:
+            executable: /bin/bash
+          changed_when: true
 
     - name: Set resolved snapshot path
       ansible.builtin.set_fact:
-        snapshot_path: "{{ backup_base_dir }}/{{ restore_snapshot_resolved }}"
+        snapshot_path: >-
+          {{ restore_staging_dir if archive_stat.stat.exists
+             else backup_base_dir ~ '/' ~ restore_snapshot_resolved }}
 
     - name: Display snapshot being restored
       ansible.builtin.debug:
@@ -76,6 +120,18 @@
       tags: [verify]
 
   always:
+    # The staging tree holds the decrypted secrets, so it must not outlive
+    # the run, successful or not.
+    - name: Remove the decrypted staging directory
+      ansible.builtin.file:
+        path: "{{ restore_staging_dir }}"
+        state: absent
+
+    - name: Remove the temporary passphrase file
+      ansible.builtin.file:
+        path: "{{ backup_passphrase_file }}"
+        state: absent
+
     # Unmount and report
     - name: Unmount NAS backup share
       ansible.posix.mount:

@@ -2,5 +2,21 @@
 - name: Restore Raspberry Pi from Synology NAS backup
   hosts: raspberrypi
   become: true
+
+  vars_prompt:
+    # No confirm here: a wrong passphrase simply fails to decrypt, which is
+    # caught before anything on the host is touched.
+    - name: backup_passphrase
+      prompt: "Passphrase for the backup archive"
+      private: true
+
+  pre_tasks:
+    - name: Require a passphrase
+      ansible.builtin.fail:
+        msg: >-
+          A passphrase is required. Backup archives are encrypted and cannot
+          be read without one.
+      when: backup_passphrase | default('') | length == 0
+
   roles:
     - restore
